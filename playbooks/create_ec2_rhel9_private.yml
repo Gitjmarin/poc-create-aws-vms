@@ -7,26 +7,20 @@
   vars:
     aws_region: us-east-1
 
+    vpc_id: vpc-069218dbf88ad5675
     subnet_id: subnet-0dce8b078af68d183
     security_group_id: sg-07b67bf25cbd945cf
 
     instance_name: hwc-aap-poc-node-p10
     instance_type: t2.micro
-
-    # AWS Key Pair
     key_name: new-key-pair-aws-hwc-app-poc
 
-    # SSH
-    ssh_user: ec2-user
     ssh_private_key_path: /root/.ssh/id_ed25519
+    ssh_user: ec2-user
 
   tasks:
 
-    #######################################################################
-    # Verify instance does not already exist
-    #######################################################################
-
-    - name: Search existing EC2 instance
+    - name: Search existing EC2 instance with same Name tag
       amazon.aws.ec2_instance_info:
         region: "{{ aws_region }}"
         filters:
@@ -38,15 +32,16 @@
             - stopped
       register: existing_instance
 
-    - name: Stop if instance already exists
+    - name: Stop play if instance already exists
+      ansible.builtin.debug:
+        msg: "Instance {{ instance_name }} already exists. No new VM will be created."
+      when: existing_instance.instances | length > 0
+
+    - name: End play when instance already exists
       ansible.builtin.meta: end_play
       when: existing_instance.instances | length > 0
 
-    #######################################################################
-    # Find latest official RHEL 9 AMI
-    #######################################################################
-
-    - name: Find latest official RHEL 9 AMI
+    - name: Find latest official Red Hat Enterprise Linux 9 x86_64 AMI
       amazon.aws.ec2_ami_info:
         region: "{{ aws_region }}"
         owners:
@@ -59,48 +54,39 @@
           state: available
       register: rhel9_amis
 
-    - name: Fail if no RHEL AMI found
+    - name: Fail if no RHEL 9 AMI was found
       ansible.builtin.fail:
-        msg: No official RHEL 9 AMI found.
+        msg: "No official Red Hat RHEL 9 x86_64 AMI found in {{ aws_region }}."
       when: rhel9_amis.images | length == 0
 
-    - name: Select newest AMI
+    - name: Select latest RHEL 9 AMI by creation date
       ansible.builtin.set_fact:
-        latest_ami: "{{ (rhel9_amis.images | sort(attribute='creation_date'))[-1] }}"
+        rhel9_latest_ami: "{{ (rhel9_amis.images | sort(attribute='creation_date'))[-1] }}"
 
     - name: Show selected AMI
       ansible.builtin.debug:
         msg:
-          - "AMI: {{ latest_ami.image_id }}"
-          - "Name: {{ latest_ami.name }}"
-          - "Created: {{ latest_ami.creation_date }}"
+          - "Selected AMI ID: {{ rhel9_latest_ami.image_id }}"
+          - "Selected AMI Name: {{ rhel9_latest_ami.name }}"
+          - "Creation Date: {{ rhel9_latest_ami.creation_date }}"
 
-    #######################################################################
-    # Create EC2
-    #######################################################################
-
-    - name: Create EC2
+    - name: Create EC2 instance
       amazon.aws.ec2_instance:
         region: "{{ aws_region }}"
         name: "{{ instance_name }}"
-        image_id: "{{ latest_ami.image_id }}"
+        image_id: "{{ rhel9_latest_ami.image_id }}"
         instance_type: "{{ instance_type }}"
         key_name: "{{ key_name }}"
         vpc_subnet_id: "{{ subnet_id }}"
         security_group: "{{ security_group_id }}"
-
-        network_interfaces:
-          - device_index: 0
-            subnet_id: "{{ subnet_id }}"
-            groups:
-              - "{{ security_group_id }}"
-            assign_public_ip: false
-
+        network:
+          assign_public_ip: false
         wait: true
         wait_timeout: 600
-
+        tags:
+          Name: "{{ instance_name }}"
+          Owner: TI
         exact_count: 1
-
         filters:
           "tag:Name": "{{ instance_name }}"
           instance-state-name:
@@ -108,73 +94,49 @@
             - running
             - stopping
             - stopped
+      register: created_ec2
 
-        tags:
-          Name: "{{ instance_name }}"
-          Owner: TI
-
-      register: ec2_create
-
-    #######################################################################
-    # Wait until Running
-    #######################################################################
-
-    - name: Wait until instance is Running
+    - name: Wait until EC2 instance is running
       amazon.aws.ec2_instance_info:
         region: "{{ aws_region }}"
         filters:
           "tag:Name": "{{ instance_name }}"
-      register: ec2_info
+          instance-state-name:
+            - running
+      register: new_instance_info
       retries: 60
-      delay: 5
-      until:
-        - ec2_info.instances | length > 0
-        - ec2_info.instances[0].state.name == "running"
+      delay: 1
+      until: new_instance_info.instances | length > 0
 
-    #######################################################################
-    # Obtain private IP
-    #######################################################################
-
-    - name: Save private IP
+    - name: Set private IP
       ansible.builtin.set_fact:
-        instance_private_ip: "{{ ec2_info.instances[0].private_ip_address }}"
+        new_instance_private_ip: "{{ new_instance_info.instances[0].private_ip_address }}"
 
     - name: Show private IP
       ansible.builtin.debug:
-        msg: "Private IP: {{ instance_private_ip }}"
+        msg: "Instance {{ instance_name }} private IP is {{ new_instance_private_ip }}"
 
-    #######################################################################
-    # Wait for SSH
-    #######################################################################
-
-    - name: Wait for SSH port
+    - name: Wait for SSH to become available
       ansible.builtin.wait_for:
-        host: "{{ instance_private_ip }}"
+        host: "{{ new_instance_private_ip }}"
         port: 22
-        timeout: 300
         delay: 10
+        timeout: 300
+        state: started
 
-    #######################################################################
-    # Validate SSH
-    #######################################################################
-
-    - name: Validate SSH access
-      ansible.builtin.command:
-        argv:
-          - ssh
-          - -i
-          - "{{ ssh_private_key_path }}"
-          - -o
-          - StrictHostKeyChecking=no
-          - -o
-          - UserKnownHostsFile=/dev/null
-          - "{{ ssh_user }}@{{ instance_private_ip }}"
-          - hostname
-      register: ssh_test
+    - name: Validate SSH with hostname command
+      ansible.builtin.command: >
+        ssh
+        -o StrictHostKeyChecking=no
+        -o UserKnownHostsFile=/dev/null
+        -i {{ ssh_private_key_path }}
+        {{ ssh_user }}@{{ new_instance_private_ip }}
+        hostname
+      register: ssh_hostname
       changed_when: false
 
-    - name: Show SSH result
+    - name: Show SSH validation result
       ansible.builtin.debug:
         msg:
           - "SSH validation successful."
-          - "Hostname: {{ ssh_test.stdout }}"
+          - "Hostname output: {{ ssh_hostname.stdout }}"
