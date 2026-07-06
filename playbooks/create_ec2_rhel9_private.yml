@@ -16,7 +16,7 @@
     key_name: key-pair-aws-hwc-app-poc
 
     ssh_private_key_path: /root/.ssh/id_rsa
-    ssh_user: root
+    ssh_user: ec2-user
 
   tasks:
 
@@ -96,7 +96,7 @@
             - stopped
       register: created_ec2
 
-    - name: Refresh EC2 instance info after creation
+    - name: Wait until EC2 instance is running
       amazon.aws.ec2_instance_info:
         region: "{{ aws_region }}"
         filters:
@@ -104,11 +104,9 @@
           instance-state-name:
             - running
       register: new_instance_info
-
-    - name: Fail if created instance is not running
-      ansible.builtin.fail:
-        msg: "Instance {{ instance_name }} was not found in running state."
-      when: new_instance_info.instances | length == 0
+      retries: 30
+      delay: 10
+      until: new_instance_info.instances | length > 0
 
     - name: Set private IP
       ansible.builtin.set_fact:
