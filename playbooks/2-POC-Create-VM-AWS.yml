@@ -16,7 +16,7 @@
     key_name: new-key-pair-aws-hwc-app-poc
 
     aap_inventory_name: POC-Inventory
-    aap_controller_url: "https://platform.cus-rvlw4m.aws.ansiblecloud.redhat.com"
+    aap_controller_url: "https://platform.cus-rvlw4m.aws.ansiblecloud.redhat.com/execution"
     aap_token: "{{ lookup('env', 'AAP_TOKEN') }}"
 
   tasks:
