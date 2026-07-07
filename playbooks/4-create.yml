@@ -104,6 +104,52 @@
       ansible.builtin.set_fact:
         new_instance_private_ip: "{{ created_ec2.instances[0].private_ip_address }}"
 
-    - name: Show private IP
+  
+    - name: Get VPC details
+      amazon.aws.ec2_vpc_net_info:
+        region: "{{ aws_region }}"
+        vpc_ids:
+          - "{{ vpc_id }}"
+      register: vpc_info
+
+    - name: Get Subnet details
+      amazon.aws.ec2_vpc_subnet_info:
+        region: "{{ aws_region }}"
+        subnet_ids:
+          - "{{ subnet_id }}"
+      register: subnet_info
+
+    - name: Get Security Group details
+      amazon.aws.ec2_security_group_info:
+        region: "{{ aws_region }}"
+        filters:
+          group-id: "{{ security_group_id }}"
+      register: sg_info
+
+    - name: Show final provisioning summary
       ansible.builtin.debug:
-        msg: "Instance {{ instance_name }} private IP is {{ new_instance_private_ip }}"
+        msg:
+          - "============================================================"
+          - " EC2 Provisioning Summary"
+          - "============================================================"
+          - "Instance Name      : {{ instance_name }}"
+          - "Instance ID        : {{ created_ec2.instances[0].instance_id }}"
+          - "Instance Type      : {{ instance_type }}"
+          - "Private IP         : {{ new_instance_private_ip }}"
+          - "AMI ID             : {{ rhel9_latest_ami.image_id }}"
+          - "AMI Name           : {{ rhel9_latest_ami.name }}"
+          - "AWS Region         : {{ aws_region }}"
+          - "VPC ID             : {{ vpc_id }}"
+          - "VPC Name           : {{ vpc_info.vpcs[0].tags.Name | default('N/A') }}"
+          - "CIDR Block         : {{ vpc_info.vpcs[0].cidr_block | default('N/A') }}"
+          - "Subnet ID          : {{ subnet_id }}"
+          - "Subnet Name        : {{ subnet_info.subnets[0].tags.Name | default('N/A') }}"
+          - "Subnet CIDR        : {{ subnet_info.subnets[0].cidr_block | default('N/A') }}"
+          - "Availability Zone  : {{ subnet_info.subnets[0].availability_zone | default('N/A') }}"
+          - "Security Group ID  : {{ security_group_id }}"
+          - "Security Group Name: {{ sg_info.security_groups[0].group_name | default('N/A') }}"
+          - "Key Pair           : {{ key_name }}"
+          - "Public IP Assigned : false"
+          - "Owner Tag          : TI"
+          - "Provisioning State : SUCCESS"
+          - "============================================================"
