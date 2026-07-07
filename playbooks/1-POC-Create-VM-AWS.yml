@@ -153,14 +153,22 @@
           - "Owner Tag          : TI"
           - "Provisioning State : SUCCESS"
           - "============================================================"
+              - name: Show final provisioning summary
+      ansible.builtin.debug:
+        msg:
+          - "============================================================"
+          - " EC2 Provisioning Summary"
+          - "============================================================"
+          - "Instance Name      : {{ instance_name }}"
+          - "Private IP         : {{ new_instance_private_ip }}"
+          - "Provisioning State : SUCCESS"
+          - "============================================================"
 
-
-
-   - name: Add host to AAP Inventory
-     awx.awx.host:
-       name: "{{ instance_name }}"
-       inventory: POC-inventory
-       variables:
-         ansible_host: "{{ new_instance_private_ip }}"
-         ansible_user: ec2-user
-       state: present
+    - name: Add host to AAP Inventory
+      awx.awx.host:
+        name: "{{ instance_name }}"
+        inventory: poc-inventory-2
+        variables:
+          ansible_host: "{{ new_instance_private_ip }}"
+          ansible_user: ec2-user
+        state: present
