@@ -16,7 +16,7 @@
     key_name: new-key-pair-aws-hwc-app-poc
 
     aap_inventory_name: POC-Inventory
-    aap_controller_url: "https://platform.cus-rvlw4m.aws.ansiblecloud.redhat.com/execution"
+    aap_controller_url: "https://platform.cus-rvlw4m.aws.ansiblecloud.redhat.com/api/controller/v2"
     aap_token: "{{ lookup('env', 'AAP_TOKEN') }}"
 
   tasks:
@@ -158,7 +158,7 @@
 
     - name: Get AAP Inventory ID
       ansible.builtin.uri:
-        url: "{{ aap_controller_url }}/api/v2/inventories/?name={{ aap_inventory_name }}"
+        url: "{{ aap_controller_url }}/inventories/?name={{ aap_inventory_name }}"
         method: GET
         headers:
           Authorization: "Bearer {{ aap_token }}"
