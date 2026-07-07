@@ -109,7 +109,8 @@
     - name: Allocate and associate Elastic IP
       amazon.aws.ec2_eip:
         region: "{{ aws_region }}"
-        instance_id: "{{ new_instance_id }}"
+        device_id: "{{ new_instance_id }}"
+        in_vpc: true
         tag_name: Name
         tag_value: "{{ instance_name }}-EIP"
         state: present
