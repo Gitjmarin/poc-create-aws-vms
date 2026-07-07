@@ -1,5 +1,5 @@
 ---
-- name: Create private RHEL 9 EC2 VM from AAP Execution Node
+- name: Create private LINUX VM RHEL 9 EC2 VM from AAP Execution
   hosts: localhost
   connection: local
   gather_facts: false
