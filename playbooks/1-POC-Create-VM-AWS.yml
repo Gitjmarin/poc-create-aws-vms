@@ -159,7 +159,7 @@
    - name: Add host to AAP Inventory
      awx.awx.host:
        name: "{{ instance_name }}"
-       inventory: poc-inventory-2
+       inventory: POC-inventory
        variables:
          ansible_host: "{{ new_instance_private_ip }}"
          ansible_user: ec2-user
