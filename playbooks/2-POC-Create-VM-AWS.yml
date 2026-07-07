@@ -172,7 +172,8 @@
 
     - name: Add host to AAP Inventory
       ansible.builtin.uri:
-        url: "{{ aap_controller_url }}/api/v2/hosts/"
+        
+        url: "{{ aap_controller_url }}/hosts/"
         method: POST
         headers:
           Authorization: "Bearer {{ aap_token }}"
