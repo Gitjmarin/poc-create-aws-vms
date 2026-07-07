@@ -123,15 +123,7 @@
         filters:
           group-id: "{{ security_group_id }}"
       register: sg_info
-
-    - name: Add host to AAP Inventory
-      awx.awx.host:
-        name: "{{ instance_name }}"
-        inventory: "{{ aap_inventory_name }}"
-        variables:
-          ansible_host: "{{ new_instance_private_ip }}"
-          ansible_user: ec2-user
-        state: present
+   
 
     - name: Show final provisioning summary
       ansible.builtin.debug:
