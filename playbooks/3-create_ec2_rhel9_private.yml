@@ -116,6 +116,10 @@
         timeout: 300
         state: started
 
+    - name: Validate local SSH key file
+      ansible.builtin.command: ls -l /root/.ssh/id_ed25519
+       changed_when: false
+
     - name: Validate SSH with hostname command
       ansible.builtin.command: >
         ssh
