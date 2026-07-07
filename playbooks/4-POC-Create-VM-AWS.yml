@@ -105,7 +105,7 @@
       ansible.builtin.set_fact:
         new_instance_private_ip: "{{ created_ec2.instances[0].private_ip_address }}"
         new_instance_id: "{{ created_ec2.instances[0].instance_id }}"
-        
+
     - name: Wait until EC2 instance is running
       amazon.aws.ec2_instance_info:
         region: "{{ aws_region }}"
@@ -121,6 +121,7 @@
         region: "{{ aws_region }}"
         device_id: "{{ new_instance_id }}"
         in_vpc: true
+        reuse_existing_ip_allowed: true
         tag_name: Name
         tag_value: "{{ instance_name }}-EIP"
         state: present
