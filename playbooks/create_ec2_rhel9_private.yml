@@ -96,17 +96,21 @@
             - stopped
       register: created_ec2
 
+    - name: Set created instance ID
+      ansible.builtin.set_fact:
+        created_instance_id: "{{ created_ec2.instances[0].instance_id }}"
+
     - name: Wait until EC2 instance is running
       amazon.aws.ec2_instance_info:
         region: "{{ aws_region }}"
-        filters:
-          "tag:Name": "{{ instance_name }}"
-          instance-state-name:
-            - running
+        instance_ids:
+          - "{{ created_instance_id }}"
       register: new_instance_info
       retries: 60
-      delay: 1
-      until: new_instance_info.instances | length > 0
+      delay: 10
+      until:
+        - new_instance_info.instances | length > 0
+        - new_instance_info.instances[0].state.name == "running"
 
     - name: Set private IP
       ansible.builtin.set_fact:
