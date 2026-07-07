@@ -155,3 +155,37 @@
           - "Owner Tag          : TI"
           - "Provisioning State : SUCCESS"
           - "============================================================"
+
+    - name: Get AAP Inventory ID
+      ansible.builtin.uri:
+        url: "{{ aap_controller_url }}/api/v2/inventories/?name={{ aap_inventory_name }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ aap_token }}"
+        return_content: true
+        validate_certs: true
+      register: aap_inventory_lookup
+
+    - name: Set AAP Inventory ID
+      ansible.builtin.set_fact:
+        aap_inventory_id: "{{ aap_inventory_lookup.json.results[0].id }}"
+
+    - name: Add host to AAP Inventory
+      ansible.builtin.uri:
+        url: "{{ aap_controller_url }}/api/v2/hosts/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ aap_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          name: "{{ instance_name }}"
+          inventory: "{{ aap_inventory_id }}"
+          variables: |
+            ansible_host: {{ new_instance_private_ip }}
+            ansible_user: ec2-user
+        status_code:
+          - 201
+          - 400
+        validate_certs: true
+      register: aap_host_add
