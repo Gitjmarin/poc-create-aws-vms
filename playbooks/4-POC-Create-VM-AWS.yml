@@ -11,7 +11,7 @@
     subnet_id: subnet-0dce8b078af68d183
     security_group_id: sg-07b67bf25cbd945cf
 
-    instance_name: hwc-aap-poc-node-p10
+    instance_name: lnx-hwc-aap-poc-node-p10
     instance_type: t2.micro
     key_name: new-key-pair-aws-hwc-app-poc
 
