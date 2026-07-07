@@ -181,6 +181,7 @@
         body_format: json
         body:
           name: "{{ instance_name }}"
+          description: "IT-Infra Linux Server at AWS"
           inventory: "{{ aap_inventory_id }}"
           variables: |
             ansible_host: {{ new_instance_private_ip }}
