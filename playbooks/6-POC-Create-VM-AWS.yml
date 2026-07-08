@@ -1,0 +1,299 @@
+---
+# ============================================================================
+# Aprovisiona una VM RHEL 9 en AWS EC2 desde un nodo de ejecución de AAP
+# y registra el host en el inventario de Automation Controller.
+#
+# Cambios frente a la versión original:
+#   - Asociación de Elastic IP ahora es OPCIONAL (assign_elastic_ip), para
+#     resolver la contradicción "VM privada" vs. EIP pública.
+#   - Selección de EIP libre robustecida + guarda si no hay ninguna disponible.
+#   - Alta de host en AAP: se comprueba antes con GET y ya no se traga el 400.
+#   - Bloque block/rescue alrededor del aprovisionamiento en AWS.
+#   - t2.micro -> t3.micro (mejor precio/rendimiento).
+#   - Guardas (assert) tras crear la instancia.
+# ============================================================================
+- name: Create private LINUX VM RHEL 9 EC2 VM from AAP Execution
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    aws_region: us-east-1
+
+    vpc_id: vpc-069218dbf88ad5675
+    subnet_id: subnet-0dce8b078af68d183
+    security_group_id: sg-07b67bf25cbd945cf
+
+    instance_name: lnx-hwc-aap-poc-node-p10
+    instance_type: t3.micro
+    key_name: new-key-pair-aws-hwc-app-poc
+
+    # Controla si se asocia una Elastic IP (IP pública) a la instancia.
+    # false  -> instancia realmente privada (coherente con el nombre).
+    # true   -> se busca y asocia una EIP libre.
+    assign_elastic_ip: false
+
+    aap_inventory_name: POC-Inventory
+    aap_controller_url: "https://platform.cus-rvlw4m.aws.ansiblecloud.redhat.com/api/controller/v2"
+    aap_token: "{{ lookup('env', 'AAP_TOKEN') }}"
+
+  tasks:
+
+    # ------------------------------------------------------------------
+    # 1. Idempotencia: no crear si ya existe
+    # ------------------------------------------------------------------
+    - name: Search existing EC2 instance with same Name tag
+      amazon.aws.ec2_instance_info:
+        region: "{{ aws_region }}"
+        filters:
+          "tag:Name": "{{ instance_name }}"
+          instance-state-name:
+            - pending
+            - running
+            - stopping
+            - stopped
+      register: existing_instance
+
+    - name: End play when instance already exists
+      when: existing_instance.instances | length > 0
+      block:
+        - name: Notify that instance already exists
+          ansible.builtin.debug:
+            msg: "Instance {{ instance_name }} already exists. No new VM will be created."
+
+        - name: Stop play
+          ansible.builtin.meta: end_play
+
+    # ------------------------------------------------------------------
+    # 2. Aprovisionamiento en AWS (con rescate ante fallos)
+    # ------------------------------------------------------------------
+    - name: Provision EC2 instance
+      block:
+
+        - name: Find latest official Red Hat Enterprise Linux 9 x86_64 AMI
+          amazon.aws.ec2_ami_info:
+            region: "{{ aws_region }}"
+            owners:
+              - "309956199498"
+            filters:
+              name: "RHEL-9*_HVM-*-x86_64-*"
+              architecture: x86_64
+              virtualization-type: hvm
+              root-device-type: ebs
+              state: available
+          register: rhel9_amis
+
+        - name: Fail if no RHEL 9 AMI was found
+          ansible.builtin.fail:
+            msg: "No official Red Hat RHEL 9 x86_64 AMI found in {{ aws_region }}."
+          when: rhel9_amis.images | length == 0
+
+        - name: Select latest RHEL 9 AMI by creation date
+          ansible.builtin.set_fact:
+            rhel9_latest_ami: "{{ (rhel9_amis.images | sort(attribute='creation_date'))[-1] }}"
+
+        - name: Show selected AMI
+          ansible.builtin.debug:
+            msg:
+              - "Selected AMI ID: {{ rhel9_latest_ami.image_id }}"
+              - "Selected AMI Name: {{ rhel9_latest_ami.name }}"
+              - "Creation Date: {{ rhel9_latest_ami.creation_date }}"
+
+        - name: Create EC2 instance
+          amazon.aws.ec2_instance:
+            region: "{{ aws_region }}"
+            name: "{{ instance_name }}"
+            image_id: "{{ rhel9_latest_ami.image_id }}"
+            instance_type: "{{ instance_type }}"
+            key_name: "{{ key_name }}"
+            vpc_subnet_id: "{{ subnet_id }}"
+            security_group: "{{ security_group_id }}"
+            network_interfaces:
+              - assign_public_ip: false
+            wait: true
+            wait_timeout: 600
+            tags:
+              Name: "{{ instance_name }}"
+              Owner: TI
+            exact_count: 1
+            filters:
+              "tag:Name": "{{ instance_name }}"
+              instance-state-name:
+                - pending
+                - running
+                - stopping
+                - stopped
+          register: created_ec2
+
+        # Guarda: la instancia debe existir antes de seguir usando índice [0]
+        - name: Assert the instance was created
+          ansible.builtin.assert:
+            that:
+              - created_ec2.instances is defined
+              - created_ec2.instances | length > 0
+            fail_msg: "La creación de la instancia no devolvió datos de instancia."
+
+        - name: Set facts from created EC2 result
+          ansible.builtin.set_fact:
+            new_instance_private_ip: "{{ created_ec2.instances[0].private_ip_address }}"
+            new_instance_id: "{{ created_ec2.instances[0].instance_id }}"
+
+        # ------------------------------------------------------------------
+        # 3. Elastic IP (opcional)
+        # ------------------------------------------------------------------
+        - name: Associate Elastic IP
+          when: assign_elastic_ip | bool
+          block:
+            - name: Get Elastic IP info
+              amazon.aws.ec2_eip_info:
+                region: "{{ aws_region }}"
+              register: eip_info
+
+            - name: Build list of free Elastic IPs
+              ansible.builtin.set_fact:
+                free_eips: "{{ eip_info.addresses | selectattr('association_id', 'undefined') | list }}"
+
+            - name: Fail if no free Elastic IP is available
+              ansible.builtin.fail:
+                msg: "No hay ninguna Elastic IP libre en {{ aws_region }}."
+              when: free_eips | length == 0
+
+            - name: Set available Elastic IP
+              ansible.builtin.set_fact:
+                available_eip: "{{ free_eips[0].public_ip }}"
+
+            - name: Associate existing Elastic IP
+              amazon.aws.ec2_eip:
+                region: "{{ aws_region }}"
+                device_id: "{{ new_instance_id }}"
+                public_ip: "{{ available_eip }}"
+                in_vpc: true
+                state: present
+              register: eip_result
+
+            - name: Set Elastic IP address
+              ansible.builtin.set_fact:
+                new_instance_eip: "{{ eip_result.public_ip }}"
+
+      rescue:
+        - name: Report provisioning failure
+          ansible.builtin.fail:
+            msg: >-
+              Falló el aprovisionamiento de la instancia {{ instance_name }}.
+              Error: {{ ansible_failed_result.msg | default('desconocido') }}
+
+    # ------------------------------------------------------------------
+    # 4. Datos de red para el resumen
+    # ------------------------------------------------------------------
+    - name: Get VPC details
+      amazon.aws.ec2_vpc_net_info:
+        region: "{{ aws_region }}"
+        vpc_ids:
+          - "{{ vpc_id }}"
+      register: vpc_info
+
+    - name: Get Subnet details
+      amazon.aws.ec2_vpc_subnet_info:
+        region: "{{ aws_region }}"
+        subnet_ids:
+          - "{{ subnet_id }}"
+      register: subnet_info
+
+    - name: Get Security Group details
+      amazon.aws.ec2_security_group_info:
+        region: "{{ aws_region }}"
+        filters:
+          group-id: "{{ security_group_id }}"
+      register: sg_info
+
+    - name: Show final provisioning summary
+      ansible.builtin.debug:
+        msg:
+          - "============================================================"
+          - " EC2 Provisioning Summary"
+          - "============================================================"
+          - "Instance Name      : {{ instance_name }}"
+          - "Instance ID        : {{ new_instance_id }}"
+          - "Instance Type      : {{ instance_type }}"
+          - "Private IP         : {{ new_instance_private_ip }}"
+          - "Elastic IP         : {{ new_instance_eip | default('N/A (instancia privada)') }}"
+          - "AMI ID             : {{ rhel9_latest_ami.image_id }}"
+          - "AMI Name           : {{ rhel9_latest_ami.name }}"
+          - "AWS Region         : {{ aws_region }}"
+          - "VPC ID             : {{ vpc_id }}"
+          - "VPC Name           : {{ vpc_info.vpcs[0].tags.Name | default('N/A') }}"
+          - "CIDR Block         : {{ vpc_info.vpcs[0].cidr_block | default('N/A') }}"
+          - "Subnet ID          : {{ subnet_id }}"
+          - "Subnet Name        : {{ subnet_info.subnets[0].tags.Name | default('N/A') }}"
+          - "Subnet CIDR        : {{ subnet_info.subnets[0].cidr_block | default('N/A') }}"
+          - "Availability Zone  : {{ subnet_info.subnets[0].availability_zone | default('N/A') }}"
+          - "Security Group ID  : {{ security_group_id }}"
+          - "Security Group Name: {{ sg_info.security_groups[0].group_name | default('N/A') }}"
+          - "Key Pair           : {{ key_name }}"
+          - "AAP Inventory      : {{ aap_inventory_name }}"
+          - "Public IP Assigned : {{ assign_elastic_ip | bool }}"
+          - "Owner Tag          : TI"
+          - "Provisioning State : SUCCESS"
+          - "============================================================"
+
+    # ------------------------------------------------------------------
+    # 5. Registro del host en AAP (sin ocultar errores)
+    # ------------------------------------------------------------------
+    - name: Get AAP Inventory ID
+      ansible.builtin.uri:
+        url: "{{ aap_controller_url }}/inventories/?name={{ aap_inventory_name | urlencode }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ aap_token }}"
+        return_content: true
+        validate_certs: true
+      register: aap_inventory_lookup
+
+    - name: Fail if AAP inventory was not found
+      ansible.builtin.fail:
+        msg: "No se encontró el inventario '{{ aap_inventory_name }}' en AAP."
+      when: aap_inventory_lookup.json.results | length == 0
+
+    - name: Set AAP Inventory ID
+      ansible.builtin.set_fact:
+        aap_inventory_id: "{{ aap_inventory_lookup.json.results[0].id }}"
+
+    - name: Check if host already exists in AAP inventory
+      ansible.builtin.uri:
+        url: "{{ aap_controller_url }}/hosts/?name={{ instance_name | urlencode }}&inventory={{ aap_inventory_id }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ aap_token }}"
+        return_content: true
+        validate_certs: true
+      register: aap_host_lookup
+
+    - name: Add host to AAP Inventory
+      ansible.builtin.uri:
+        url: "{{ aap_controller_url }}/hosts/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ aap_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          name: "{{ instance_name }}"
+          description: "IT-Infra Linux Server at AWS"
+          inventory: "{{ aap_inventory_id }}"
+          variables: |
+            ansible_host: {{ new_instance_private_ip }}
+            ansible_user: ec2-user
+        status_code:
+          - 201
+        validate_certs: true
+      register: aap_host_add
+      when: aap_host_lookup.json.count | int == 0
+
+    - name: Report AAP host registration result
+      ansible.builtin.debug:
+        msg: >-
+          {{
+            'Host ' ~ instance_name ~ ' ya existía en el inventario, no se recreó.'
+            if (aap_host_lookup.json.count | int > 0)
+            else 'Host ' ~ instance_name ~ ' agregado al inventario AAP correctamente.'
+          }}
