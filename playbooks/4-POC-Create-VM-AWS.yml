@@ -123,7 +123,8 @@
 
     - name: Set available Elastic IP
       ansible.builtin.set_fact:
-        available_eip: "{{ (eip_info.addresses | selectattr('instance_id', 'undefined') | list)[0].public_ip }}"
+        available_eip: "{{ (eip_info.addresses | rejectattr('association_id', 'defined') | list)[0].public_ip }}"    
+
 
     - name: Associate existing Elastic IP
       amazon.aws.ec2_eip:
@@ -134,12 +135,7 @@
         state: present
       register: eip_result
     
-    
-    
-    
-    
-    
-    
+        
     
     
     
