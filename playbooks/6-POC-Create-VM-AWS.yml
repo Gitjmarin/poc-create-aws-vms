@@ -31,7 +31,7 @@
     # Controla si se asocia una Elastic IP (IP pública) a la instancia.
     # false  -> instancia realmente privada (coherente con el nombre).
     # true   -> se busca y asocia una EIP libre.
-    assign_elastic_ip: false
+    assign_elastic_ip: true
 
     aap_inventory_name: POC-Inventory
     aap_controller_url: "https://platform.cus-rvlw4m.aws.ansiblecloud.redhat.com/api/controller/v2"
