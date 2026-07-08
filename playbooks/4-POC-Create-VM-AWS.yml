@@ -116,17 +116,35 @@
       retries: 30
       delay: 10
 
-    - name: Allocate and associate Elastic IP
+    - name: Find available Elastic IP
+      amazon.aws.ec2_eip_info:
+        region: "{{ aws_region }}"
+      register: eip_info
+
+    - name: Set available Elastic IP
+      ansible.builtin.set_fact:
+        available_eip: "{{ (eip_info.addresses | selectattr('instance_id', 'undefined') | list)[0].public_ip }}"
+
+    - name: Associate existing Elastic IP
       amazon.aws.ec2_eip:
         region: "{{ aws_region }}"
         device_id: "{{ new_instance_id }}"
+        public_ip: "{{ available_eip }}"
         in_vpc: true
-        reuse_existing_ip_allowed: true
-        tag_name: Name
-        tag_value: "{{ instance_name }}-EIP"
         state: present
       register: eip_result
-
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+   
     - name: Set Elastic IP address
       ansible.builtin.set_fact:
         new_instance_eip: "{{ eip_result.public_ip }}"
