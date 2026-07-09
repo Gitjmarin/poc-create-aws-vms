@@ -1,0 +1,81 @@
+---
+# ============================================================================
+# Post-provisión: conecta por SSH a los hosts (registrados en la POC-Inventory
+# por el playbook de creación) y ejecuta comandos de verificación (df -h, etc.).
+# - 
+# Diseñado para el Escenario B (AAP-native):
+#   - Es un Job Template independiente que apunta a la POC-Inventory.
+#   - La autenticación SSH la provee una MACHINE CREDENTIAL adjunta al Job
+#     Template. La llave privada NO va en el playbook: AAP la inyecta en el
+#     Execution Environment vía ssh-agent en tiempo de ejecución.
+#   - El execution node está dentro de la VPC, así que conecta por la IP
+#     privada con la que el host quedó registrado (ansible_host).
+#
+# Uso recomendado en un Workflow:
+#   Job 1 (crear + registrar en POC-Inventory)  ->  Job 2 (este playbook)
+#   En el Job 2, usa "Limit" = nombre de la instancia para acotar el alcance,
+#   o pasa target_hosts como extra var.
+# ============================================================================
+- name: Post-provision SSH checks on newly created hosts
+  hosts: "{{ target_hosts | default('all') }}"
+  gather_facts: false
+
+  vars:
+    # Acepta la host key desconocida de un servidor nuevo sin fallar,
+    # pero la fija tras el primer contacto (más seguro que desactivar el check).
+    ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
+
+    # Tiempo máximo de espera a que sshd acepte conexiones (segundos).
+    ssh_ready_timeout: 300
+
+    # Comandos de verificación a ejecutar. Ajusta o extiende esta lista.
+    verification_commands:
+      - "df -h"
+      - "free -h"
+      - "uptime"
+      - "hostnamectl"
+
+  tasks:
+
+    - name: Wait for SSH to become available
+      ansible.builtin.wait_for_connection:
+        timeout: "{{ ssh_ready_timeout }}"
+
+    - name: Gather minimal facts (confirms connectivity)
+      ansible.builtin.setup:
+        gather_subset:
+          - "!all"
+          - "min"
+
+    - name: Run verification commands
+      ansible.builtin.command: "{{ item }}"
+      register: cmd_results
+      changed_when: false
+      failed_when: false
+      loop: "{{ verification_commands }}"
+
+    - name: Show header
+      ansible.builtin.debug:
+        msg:
+          - "========================================"
+          - "Host: {{ inventory_hostname }}  ({{ ansible_host | default('N/A') }})"
+          - "========================================"
+
+    - name: Show verification output
+      ansible.builtin.debug:
+        msg:
+          - "$ {{ item.cmd | join(' ') }}   (rc={{ item.rc }})"
+          - "{{ item.stdout_lines }}"
+      loop: "{{ cmd_results.results }}"
+      loop_control:
+        label: "{{ item.cmd | join(' ') }}"
+
+    - name: Fail if any verification command returned non-zero
+      ansible.builtin.assert:
+        that:
+          - cmd_results.results | selectattr('rc', 'ne', 0) | list | length == 0
+        fail_msg: >-
+          Al menos un comando de verificación falló:
+          {{ cmd_results.results | selectattr('rc', 'ne', 0)
+             | map(attribute='cmd') | list }}
+        success_msg: "Todos los comandos de verificación se ejecutaron correctamente."
