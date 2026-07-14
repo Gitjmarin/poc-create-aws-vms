@@ -1,0 +1,56 @@
+---
+# ============================================================================
+# Post-provisión: conecta por SSH al host recién creado (registrado en la
+# POC-Inventory por el playbook de creación) y averigua únicamente:
+#   - hostname
+#   - uptime
+#
+# Diseñado para el Escenario B (AAP-native):
+#   - Es un Job Template independiente que apunta a la POC-Inventory.
+#   - La autenticación SSH la provee una MACHINE CREDENTIAL adjunta al Job
+#     Template. La llave privada NO va en el playbook: AAP la inyecta en el
+#     Execution Environment vía ssh-agent en tiempo de ejecución.
+#   - El execution node está dentro de la VPC, así que conecta por la IP
+#     privada con la que el host quedó registrado (ansible_host).
+#
+# Uso recomendado en un Workflow:
+#   Job 1 (crear + registrar en POC-Inventory)  ->  Job 2 (este playbook)
+#   En el Job 2, usa "Limit" = nombre de la instancia para acotar el alcance,
+#   o pasa target_hosts como extra var (por defecto: lnx-hwc-aap-poc-node-p10).
+# ============================================================================
+- name: Get hostname and uptime from newly created host
+  hosts: "{{ target_hosts | default('lnx-hwc-aap-poc-node-p10') }}"
+  gather_facts: false
+
+  vars:
+    # Acepta la host key desconocida de un servidor nuevo sin fallar,
+    # pero la fija tras el primer contacto (más seguro que desactivar el check).
+    ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
+
+    # Tiempo máximo de espera a que sshd acepte conexiones (segundos).
+    ssh_ready_timeout: 300
+
+  tasks:
+
+    - name: Wait for SSH to become available
+      ansible.builtin.wait_for_connection:
+        timeout: "{{ ssh_ready_timeout }}"
+
+    - name: Get hostname
+      ansible.builtin.command: hostname
+      register: hostname_result
+      changed_when: false
+
+    - name: Get uptime
+      ansible.builtin.command: uptime
+      register: uptime_result
+      changed_when: false
+
+    - name: Show hostname and uptime
+      ansible.builtin.debug:
+        msg:
+          - "========================================"
+          - "Host inventario : {{ inventory_hostname }}  ({{ ansible_host | default('N/A') }})"
+          - "Hostname        : {{ hostname_result.stdout }}"
+          - "Uptime          : {{ uptime_result.stdout }}"
+          - "========================================"
