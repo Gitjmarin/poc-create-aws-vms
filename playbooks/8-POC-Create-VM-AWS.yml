@@ -67,9 +67,9 @@
     - name: Show hostname, uptime and OS version
       ansible.builtin.debug:
         msg:
-          - "========================================"
+          - "=========================================="
           - "Host inventario : {{ inventory_hostname }}  ({{ ansible_host | default('N/A') }})"
           - "Hostname        : {{ hostname_result.stdout }}"
           - "Uptime          : {{ uptime_result.stdout }}"
           - "OS Version      : {{ os_release_result.stdout }}"
-          - "========================================"
+          - "=========================================="
