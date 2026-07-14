@@ -94,6 +94,39 @@
           - "=========================================="
 
     # ------------------------------------------------------------------
+    # Swap temporal: la t3.micro solo tiene 1 GiB de RAM y 'dnf update'
+    # de todo el sistema puede disparar el OOM killer (fallo rc=137).
+    # ------------------------------------------------------------------
+    - name: Ensure a swap file exists before updating
+      become: true
+      block:
+        - name: Check whether swap is already active
+          ansible.builtin.command: swapon --show
+          register: swap_status
+          changed_when: false
+
+        - name: Create and enable a 2 GiB swap file
+          when: swap_status.stdout | trim | length == 0
+          block:
+            - name: Allocate swap file
+              ansible.builtin.command: fallocate -l 2G /swapfile
+              args:
+                creates: /swapfile
+
+            - name: Secure swap file permissions
+              ansible.builtin.file:
+                path: /swapfile
+                mode: "0600"
+
+            - name: Format swap file
+              ansible.builtin.command: mkswap /swapfile
+              changed_when: true
+
+            - name: Enable swap file
+              ansible.builtin.command: swapon /swapfile
+              changed_when: true
+
+    # ------------------------------------------------------------------
     # Actualización del sistema (equivalente a 'dnf update -y')
     # ------------------------------------------------------------------
     - name: Update all packages to the latest version
@@ -104,11 +137,12 @@
       register: dnf_update
 
     # El kernel en ejecución no cambia hasta reiniciar, aunque dnf haya
-    # instalado uno nuevo. Reiniciamos para poder comparar 'uname -r'.
+    # instalado uno nuevo. Solo reiniciamos si el update cambió algo.
     - name: Reboot the host to boot into the (possibly) new kernel
       become: true
       ansible.builtin.reboot:
         reboot_timeout: "{{ ssh_ready_timeout }}"
+      when: dnf_update.changed
 
     # ------------------------------------------------------------------
     # Re-lectura tras la actualización y el reinicio
@@ -147,3 +181,23 @@
           - "{{ 'El kernel CAMBIÓ tras la actualización.'
                if kernel_before.stdout != kernel_after.stdout
                else 'El kernel NO cambió (ya estaba al día).' }}"
+
+    # ------------------------------------------------------------------
+    # Limpieza: quitar el swap temporal (solo el que creó este playbook).
+    # Tras un reboot el swap 'swapon' ya no está activo, pero el archivo
+    # /swapfile permanece en disco, así que lo borramos siempre.
+    # ------------------------------------------------------------------
+    - name: Remove temporary swap file
+      become: true
+      when: swap_status.stdout | trim | length == 0
+      block:
+        - name: Disable swap file (ignore if already off)
+          ansible.builtin.command: swapoff /swapfile
+          register: swapoff_result
+          changed_when: swapoff_result.rc == 0
+          failed_when: false
+
+        - name: Delete swap file
+          ansible.builtin.file:
+            path: /swapfile
+            state: absent
