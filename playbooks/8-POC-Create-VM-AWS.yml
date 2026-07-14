@@ -46,11 +46,17 @@
       register: uptime_result
       changed_when: false
 
-    - name: Show hostname and uptime
+    - name: Get OS version from /etc/redhat-release
+      ansible.builtin.command: cat /etc/redhat-release
+      register: os_release_result
+      changed_when: false
+
+    - name: Show hostname, uptime and OS version
       ansible.builtin.debug:
         msg:
           - "========================================"
           - "Host inventario : {{ inventory_hostname }}  ({{ ansible_host | default('N/A') }})"
           - "Hostname        : {{ hostname_result.stdout }}"
           - "Uptime          : {{ uptime_result.stdout }}"
+          - "OS Version      : {{ os_release_result.stdout }}"
           - "========================================"
