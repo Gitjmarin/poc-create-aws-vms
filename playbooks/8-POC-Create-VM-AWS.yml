@@ -44,10 +44,15 @@
 
     - name: Register system with Red Hat Subscription Manager
       become: true
-      community.general.redhat_subscription:
-        state: present
-        org_id: "{{ rhsm_org_id }}"
-        activationkey: "{{ rhsm_activation_key }}"
+      ansible.builtin.command: >-
+        subscription-manager register
+        --org="{{ rhsm_org_id }}"
+        --activationkey="{{ rhsm_activation_key }}"
+      register: rhsm_reg
+      changed_when: "'already registered' not in (rhsm_reg.stdout + rhsm_reg.stderr)"
+      failed_when: >-
+        rhsm_reg.rc != 0
+        and 'already registered' not in (rhsm_reg.stdout + rhsm_reg.stderr)
 
     - name: Get hostname
       ansible.builtin.command: hostname
