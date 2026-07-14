@@ -30,17 +30,25 @@
     # Tiempo máximo de espera a que sshd acepte conexiones (segundos).
     ssh_ready_timeout: 300
 
-    # Registro en Red Hat Subscription Manager.
-    # La activation key es un secreto: idealmente pásala como extra var o desde
-    # un Vault/credencial de AAP en lugar de dejarla en texto plano en el repo.
-    rhsm_org_id: "20579913"
-    rhsm_activation_key: "99b1c9ad-dd98-46bf-881d-0ed38fa33845"
+    # NOTA: rhsm_org_id y rhsm_activation_key NO se definen aquí.
+    # Los inyecta una Credential de AAP (Custom Credential Type
+    # "Red Hat Subscription (Activation Key)") como extra vars.
+    # Fuera de AAP, pásalos con -e o vía Ansible Vault.
 
   tasks:
 
     - name: Wait for SSH to become available
       ansible.builtin.wait_for_connection:
         timeout: "{{ ssh_ready_timeout }}"
+
+    - name: Ensure RHSM credentials were provided
+      ansible.builtin.assert:
+        that:
+          - rhsm_org_id is defined and rhsm_org_id | length > 0
+          - rhsm_activation_key is defined and rhsm_activation_key | length > 0
+        fail_msg: >-
+          Faltan rhsm_org_id / rhsm_activation_key. Adjunta la credencial
+          RHSM al Job Template (o pásalos con -e / Vault).
 
     - name: Register system with Red Hat Subscription Manager
       become: true
