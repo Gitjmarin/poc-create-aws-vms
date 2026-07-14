@@ -77,7 +77,12 @@
       register: os_release_result
       changed_when: false
 
-    - name: Show hostname, uptime and OS version
+    - name: Get running kernel version (BEFORE update)
+      ansible.builtin.command: uname -r
+      register: kernel_before
+      changed_when: false
+
+    - name: Show hostname, uptime and OS version (BEFORE update)
       ansible.builtin.debug:
         msg:
           - "=========================================="
@@ -85,4 +90,60 @@
           - "Hostname        : {{ hostname_result.stdout }}"
           - "Uptime          : {{ uptime_result.stdout }}"
           - "OS Version      : {{ os_release_result.stdout }}"
+          - "Kernel          : {{ kernel_before.stdout }}"
           - "=========================================="
+
+    # ------------------------------------------------------------------
+    # Actualización del sistema (equivalente a 'dnf update -y')
+    # ------------------------------------------------------------------
+    - name: Update all packages to the latest version
+      become: true
+      ansible.builtin.dnf:
+        name: "*"
+        state: latest
+      register: dnf_update
+
+    # El kernel en ejecución no cambia hasta reiniciar, aunque dnf haya
+    # instalado uno nuevo. Reiniciamos para poder comparar 'uname -r'.
+    - name: Reboot the host to boot into the (possibly) new kernel
+      become: true
+      ansible.builtin.reboot:
+        reboot_timeout: "{{ ssh_ready_timeout }}"
+
+    # ------------------------------------------------------------------
+    # Re-lectura tras la actualización y el reinicio
+    # ------------------------------------------------------------------
+    - name: Get uptime (AFTER reboot)
+      ansible.builtin.command: uptime
+      register: uptime_after
+      changed_when: false
+
+    - name: Get OS version from /etc/redhat-release (AFTER update)
+      ansible.builtin.command: cat /etc/redhat-release
+      register: os_release_after
+      changed_when: false
+
+    - name: Get running kernel version (AFTER update)
+      ansible.builtin.command: uname -r
+      register: kernel_after
+      changed_when: false
+
+    - name: Show hostname, uptime and OS version (AFTER update)
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "Host inventario : {{ inventory_hostname }}  ({{ ansible_host | default('N/A') }})"
+          - "Hostname        : {{ hostname_result.stdout }}"
+          - "Uptime          : {{ uptime_after.stdout }}"
+          - "OS Version      : {{ os_release_after.stdout }}"
+          - "Kernel          : {{ kernel_after.stdout }}"
+          - "=========================================="
+
+    - name: Show kernel difference summary
+      ansible.builtin.debug:
+        msg:
+          - "Kernel ANTES  : {{ kernel_before.stdout }}"
+          - "Kernel DESPUÉS: {{ kernel_after.stdout }}"
+          - "{{ 'El kernel CAMBIÓ tras la actualización.'
+               if kernel_before.stdout != kernel_after.stdout
+               else 'El kernel NO cambió (ya estaba al día).' }}"
